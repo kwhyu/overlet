@@ -1,0 +1,71 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+body.hover {
+  cursor: move;
+}
+body.locked {
+  cursor: default;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage img,
+.stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.edit-frame {
+  position: absolute;
+  inset: 0;
+  display: none;
+  border: 1.5px dashed rgba(0, 119, 182, 0.9);
+  border-radius: 6px;
+  pointer-events: none;
+}
+body.hover .edit-frame {
+  display: block;
+}
+
+.label {
+  position: absolute;
+  top: -22px;
+  left: 0;
+  font: 600 11px/1.4 "Segoe UI", system-ui, sans-serif;
+  color: #fff;
+  background: rgba(0, 119, 182, 0.92);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+body.hover .label {
+  opacity: 1;
+}
+.label::after {
+  content: " · right-click for options";
+  font-weight: 400;
+  opacity: 0.85;
+}
