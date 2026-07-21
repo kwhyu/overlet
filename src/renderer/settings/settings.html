@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src file: data: blob:; media-src file: data: blob:; style-src 'self' 'unsafe-inline' file:; script-src 'self' file:;"
+    />
+    <link rel="stylesheet" href="settings.css" />
+    <title>Desktop Mate Wannabe</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◐</span>
+        <span class="brand-name">Desktop Mate <em>Wannabe</em></span>
+      </div>
+      <div class="hint" style="opacity:.85">Right-click a widget on screen for quick options · scroll = resize</div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <nav class="nav">
+          <button class="nav-btn active" data-view="widgets">Widgets</button>
+          <button class="nav-btn" data-view="global">Global</button>
+          <button class="nav-btn" data-view="about">About</button>
+        </nav>
+
+        <div class="widget-list-wrap" id="widget-list-wrap">
+          <button class="add-btn" id="add-btn">＋ Import Media</button>
+          <ul class="widget-list" id="widget-list"></ul>
+        </div>
+      </aside>
+
+      <main class="content" id="content">
+        
+      </main>
+    </div>
+
+    <script src="settings.js"></script>
+  </body>
+</html>

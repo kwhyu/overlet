@@ -1,0 +1,51 @@
+{
+  "name": "desktop-mate-wannabe",
+  "version": "0.1.0",
+  "description": "Always-on-top desktop overlay for images, GIFs, and video (Desktop Mate-style).",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "electron",
+    "overlay",
+    "desktop-mate",
+    "always-on-top",
+    "wallpaper"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.wannabe.desktopmate",
+    "productName": "Desktop Mate Wannabe",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist-installer"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Desktop Mate Wannabe"
+    }
+  }
+}
