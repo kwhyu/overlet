@@ -116,6 +116,11 @@ This is an open-source hobby project — issues and pull requests are welcome!
 Ideas on the roadmap: Live2D/Spine animated characters, preset import/export,
 snap-to-grid, and per-widget hotkeys.
 
+## ⚠️ Disclaimer
+
+Desktop Mate Wannabe is an independent open-source project inspired by desktop overlay and mascot software. It is not affiliated with, endorsed by, or connected to any official software or trademark holders.
+
 ## 📄 License
 
-[MIT](LICENSE) © kwhyu
+[MIT](LICENSE) © 2026-present kwhyu
+

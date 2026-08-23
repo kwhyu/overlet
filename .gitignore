@@ -4,3 +4,8 @@ dist-installer/
 out/
 *.log
 .DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp

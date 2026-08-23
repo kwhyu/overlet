@@ -16,8 +16,16 @@
     "always-on-top",
     "wallpaper"
   ],
-  "author": "",
+  "author": "kwhyu",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kwhyu/desktop-mate-wannabe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kwhyu/desktop-mate-wannabe/issues"
+  },
+  "homepage": "https://github.com/kwhyu/desktop-mate-wannabe#readme",
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-builder": "^24.13.3"
