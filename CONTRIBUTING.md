@@ -26,7 +26,7 @@ your branch  ->  snapshot  ->  main
 
 - `main` holds released code. It only accepts pull requests from `snapshot`.
 - `snapshot` collects changes that are being prepared for release. It only accepts pull requests.
-- Your work goes on a new branch, such as `feature/short-name` or `fix/short-name`.
+- Your work goes on a new branch named `feature/short-name` or `bugfix/short-name`.
 
 Direct pushes to `main` and `snapshot` are blocked.
 
