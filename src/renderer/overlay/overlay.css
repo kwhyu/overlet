@@ -69,3 +69,24 @@ body.hover .label {
   font-weight: 400;
   opacity: 0.85;
 }
+
+.media-error {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(20, 24, 33, 0.88);
+  color: #fff;
+  font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+body.media-failed .media-error {
+  display: flex;
+}
+body.media-failed .stage img,
+body.media-failed .stage video {
+  display: none;
+}

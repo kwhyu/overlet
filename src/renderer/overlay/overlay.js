@@ -2,132 +2,121 @@
 
 const stage = document.getElementById('stage');
 const label = document.getElementById('label');
+const overlayApi = window.overlayAPI;
 
-let mediaEl = null;
-let currentSrc = null;
-let currentType = null;
-let current = null;
+let mediaElement = null;
+let currentItem = null;
+let dragging = false;
 
-function toFileUrl(p) {
-  if (!p) return '';
-  if (/^(https?:|file:|data:|blob:)/i.test(p)) return p;
-  let u = p.replace(/\\/g, '/');
-  if (!u.startsWith('/')) u = '/' + u;
-  return 'file://' + encodeURI(u);
+function reportAspect(width, height) {
+  if (width && height) overlayApi.reportAspect(width / height);
 }
 
-function buildMedia(item) {
-  if (mediaEl && currentSrc === item.src && currentType === item.type) return;
+function applyVideoOptions(video, item) {
+  video.loop = item.loop;
+  video.muted = item.muted;
+  video.volume = item.volume;
+}
 
-  if (mediaEl) mediaEl.remove();
-  currentSrc = item.src;
-  currentType = item.type;
+function setMediaError(failed) {
+  document.body.classList.toggle('media-failed', failed);
+}
 
-  const url = toFileUrl(item.src);
-  if (item.type === 'video') {
-    const v = document.createElement('video');
-    v.src = url;
-    v.autoplay = true;
-    v.loop = item.loop !== false;
-    v.muted = item.muted !== false;
-    v.volume = typeof item.volume === 'number' ? item.volume : 0.5;
-    v.playsInline = true;
-    v.play().catch(() => {});
-    v.addEventListener('loadedmetadata', () => {
-      if (v.videoWidth && v.videoHeight) {
-        window.overlayAPI.reportAspect(v.videoWidth / v.videoHeight);
-      }
-    });
-    mediaEl = v;
-  } else {
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = '';
-    img.addEventListener('load', () => {
-      if (img.naturalWidth && img.naturalHeight) {
-        window.overlayAPI.reportAspect(img.naturalWidth / img.naturalHeight);
-      }
-    });
-    mediaEl = img;
-  }
-  stage.appendChild(mediaEl);
+function createVideo(item) {
+  const video = document.createElement('video');
+  video.src = toFileUrl(item.src);
+  video.autoplay = true;
+  video.playsInline = true;
+  applyVideoOptions(video, item);
+  video.play().catch(() => {});
+  video.addEventListener('error', () => setMediaError(true));
+  video.addEventListener('loadedmetadata', () => {
+    setMediaError(false);
+    reportAspect(video.videoWidth, video.videoHeight);
+  });
+  return video;
+}
+
+function createImage(item) {
+  const image = document.createElement('img');
+  image.src = toFileUrl(item.src);
+  image.alt = '';
+  image.addEventListener('error', () => setMediaError(true));
+  image.addEventListener('load', () => {
+    setMediaError(false);
+    reportAspect(image.naturalWidth, image.naturalHeight);
+  });
+  return image;
+}
+
+function isCurrentMedia(item) {
+  return mediaElement && currentItem.src === item.src && currentItem.type === item.type;
+}
+
+function updateMedia(item) {
+  if (isCurrentMedia(item)) return;
+  if (mediaElement) mediaElement.remove();
+  mediaElement = item.type === 'video' ? createVideo(item) : createImage(item);
+  stage.appendChild(mediaElement);
 }
 
 function applyStyle(item) {
-  if (!mediaEl) return;
-  mediaEl.style.objectFit = item.fit || 'contain';
   const transforms = [];
   if (item.flipX) transforms.push('scaleX(-1)');
-  if (item.rotation) transforms.push('rotate(' + item.rotation + 'deg)');
-  mediaEl.style.transform = transforms.join(' ');
-  stage.style.opacity = String(
-    typeof item.opacity === 'number' ? item.opacity : 1
-  );
+  if (item.rotation) transforms.push(`rotate(${item.rotation}deg)`);
 
-  if (mediaEl.tagName === 'VIDEO') {
-    mediaEl.loop = item.loop !== false;
-    mediaEl.muted = item.muted !== false;
-    mediaEl.volume = typeof item.volume === 'number' ? item.volume : 0.5;
-  }
+  mediaElement.style.objectFit = item.fit;
+  mediaElement.style.transform = transforms.join(' ');
+  stage.style.opacity = String(item.opacity);
+  if (item.type === 'video') applyVideoOptions(mediaElement, item);
 
-  label.textContent = item.name || 'Widget';
-  document.body.classList.toggle('locked', !!item.locked);
+  label.textContent = item.name;
+  document.body.classList.toggle('locked', item.locked);
 }
 
-function render(data) {
-  if (!data || !data.item) return;
-  current = data.item;
-  buildMedia(data.item);
-  applyStyle(data.item);
+function render({ item }) {
+  updateMedia(item);
+  currentItem = item;
+  applyStyle(item);
 }
 
-let dragging = false;
-
-function draggable() {
-  return current && !current.locked;
-}
-
-document.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || dragging || !draggable()) return;
+function startDrag(event) {
+  const canDrag = currentItem && !currentItem.locked;
+  if (event.button !== 0 || dragging || !canDrag) return;
   dragging = true;
-  try {
-    document.body.setPointerCapture(e.pointerId);
-  } catch (_) {}
-  window.overlayAPI.dragStart();
-  e.preventDefault();
-});
+  document.body.setPointerCapture(event.pointerId);
+  overlayApi.dragStart();
+  event.preventDefault();
+}
 
-function stopDrag(e) {
+function stopDrag(event) {
   if (!dragging) return;
   dragging = false;
-  try {
-    document.body.releasePointerCapture(e.pointerId);
-  } catch (_) {}
-  window.overlayAPI.dragEnd();
+  if (document.body.hasPointerCapture(event.pointerId)) {
+    document.body.releasePointerCapture(event.pointerId);
+  }
+  overlayApi.dragEnd();
 }
+
+document.addEventListener('pointerdown', startDrag);
 document.addEventListener('pointerup', stopDrag);
 document.addEventListener('pointercancel', stopDrag);
-
-document.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  window.overlayAPI.contextMenu();
+document.addEventListener('pointerenter', () => document.body.classList.add('hover'));
+document.addEventListener('pointerleave', () => {
+  if (!dragging) document.body.classList.remove('hover');
 });
-
+document.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  overlayApi.contextMenu();
+});
 document.addEventListener(
   'wheel',
-  (e) => {
-    e.preventDefault();
-    window.overlayAPI.wheel(e.deltaY < 0 ? 'up' : 'down');
+  (event) => {
+    event.preventDefault();
+    overlayApi.wheel(event.deltaY < 0 ? 'up' : 'down');
   },
   { passive: false }
 );
 
-document.addEventListener('pointerenter', () =>
-  document.body.classList.add('hover')
-);
-document.addEventListener('pointerleave', () => {
-  if (!dragging) document.body.classList.remove('hover');
-});
-
-window.overlayAPI.onInit(render);
-window.overlayAPI.onUpdate(render);
+overlayApi.onInit(render);
+overlayApi.onUpdate(render);

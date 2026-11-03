@@ -1,7 +1,7 @@
 {
-  "name": "desktop-mate-wannabe",
+  "name": "overlet",
   "version": "0.1.0",
-  "description": "Always-on-top desktop overlay for images, GIFs, and video (Desktop Mate-style).",
+  "description": "Put images, GIFs and videos on top of everything on your Windows desktop.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -12,29 +12,28 @@
   "keywords": [
     "electron",
     "overlay",
-    "desktop-mate",
     "always-on-top",
-    "wallpaper"
+    "desktop-widget",
+    "windows"
   ],
   "author": "kwhyu",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kwhyu/desktop-mate-wannabe.git"
+    "url": "git+https://github.com/kwhyu/overlet.git"
   },
   "bugs": {
-    "url": "https://github.com/kwhyu/desktop-mate-wannabe/issues"
+    "url": "https://github.com/kwhyu/overlet/issues"
   },
-  "homepage": "https://github.com/kwhyu/desktop-mate-wannabe#readme",
+  "homepage": "https://github.com/kwhyu/overlet#readme",
   "devDependencies": {
-    "electron": "^32.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
   },
   "build": {
-    "appId": "com.wannabe.desktopmate",
-    "productName": "Desktop Mate Wannabe",
+    "appId": "io.github.kwhyu.overlet",
+    "productName": "Overlet",
     "directories": {
-      "buildResources": "build",
       "output": "dist-installer"
     },
     "files": [
@@ -45,7 +44,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "src/assets/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -53,7 +52,13 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Desktop Mate Wannabe"
-    }
+      "shortcutName": "Overlet",
+      "artifactName": "Overlet-Setup-${version}.${ext}"
+    },
+    "extraFiles": [
+      "LICENSE",
+      "THIRD-PARTY-NOTICES.md"
+    ],
+    "downloadAlternateFFmpeg": true
   }
 }

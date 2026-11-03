@@ -1,18 +1,25 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy"
-          content="default-src 'none'; img-src file: data: blob:; media-src file: data: blob:; style-src 'self' 'unsafe-inline' file:; script-src 'self' file:;" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src file: data: blob:; media-src file: data: blob:; style-src 'self' file:; script-src 'self' file:;"
+    />
     <link rel="stylesheet" href="overlay.css" />
+    <title>Overlet Widget</title>
   </head>
   <body>
     <div id="stage" class="stage">
-      <div id="edit-frame" class="edit-frame">
+      <div id="media-error" class="media-error">
+        <strong>Can't show this file</strong>
+        <span>It may have been moved, or its format is not supported.</span>
+      </div>
+      <div class="edit-frame">
         <span id="label" class="label"></span>
       </div>
-      
     </div>
+    <script src="../shared/file-url.js"></script>
     <script src="overlay.js"></script>
   </body>
 </html>

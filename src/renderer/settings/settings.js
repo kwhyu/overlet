@@ -1,61 +1,193 @@
 'use strict';
 
-const dmapi = window.api;
+const bridge = window.api;
 const content = document.getElementById('content');
 const widgetList = document.getElementById('widget-list');
 
+const INPUT_DEBOUNCE_MS = 180;
+const IMPORT_ORIGIN = { x: 260, y: 200 };
+const IMPORT_OFFSET = 40;
+const IMPORT_CASCADE_LENGTH = 8;
+const IMPORT_SIZE = 320;
+const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta'];
+const SPECIAL_KEYS = {
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  ' ': 'Space',
+  Escape: 'Esc',
+};
+const HTML_ENTITIES = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
+const debounceTimers = new Map();
+
 let cfg = { globals: {}, items: [] };
 let displays = [];
+let dockOptions = [];
+let appVersion = '';
 let hidden = false;
 let selectedId = null;
 let view = 'widgets';
 
-function toFileUrl(p) {
-  if (!p) return '';
-  if (/^(https?:|file:|data:|blob:)/i.test(p)) return p;
-  let u = p.replace(/\\/g, '/');
-  if (!u.startsWith('/')) u = '/' + u;
-  return 'file://' + encodeURI(u);
+const byId = (id) => document.getElementById(id);
+const percent = (fraction) => `${Math.round(fraction * 100)}%`;
+const checkedAttr = (on) => (on ? 'checked' : '');
+const selectedAttr = (on) => (on ? 'selected' : '');
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => HTML_ENTITIES[char]);
+}
+
+function mediaUrl(src) {
+  return escapeHtml(toFileUrl(src));
 }
 
 function typeIcon(type) {
-  return type === 'video' ? '🎬' : type === 'gif' ? '🎞️' : '🖼️';
+  if (type === 'video') return '🎬';
+  return type === 'gif' ? '🎞️' : '🖼️';
 }
 
-const debouncers = new Map();
-function debounce(key, fn, ms = 180) {
-  clearTimeout(debouncers.get(key));
-  debouncers.set(key, setTimeout(fn, ms));
+function baseName(filePath) {
+  const fileName = filePath.replace(/\\/g, '/').split('/').pop() || 'Widget';
+  return fileName.replace(/\.[^.]+$/, '');
+}
+
+function debounce(key, callback) {
+  clearTimeout(debounceTimers.get(key));
+  debounceTimers.set(key, setTimeout(callback, INPUT_DEBOUNCE_MS));
+}
+
+function selectedItem() {
+  return cfg.items.find((item) => item.id === selectedId);
+}
+
+function displayIdForItem(item) {
+  const centerX = item.x + item.width / 2;
+  const centerY = item.y + item.height / 2;
+  const match = displays.find(
+    ({ bounds }) =>
+      centerX >= bounds.x &&
+      centerX < bounds.x + bounds.width &&
+      centerY >= bounds.y &&
+      centerY < bounds.y + bounds.height
+  );
+  return match ? match.id : displays[0] && displays[0].id;
 }
 
 async function reload() {
-  cfg = await dmapi.getConfig();
-  displays = await dmapi.getDisplays();
-  hidden = await dmapi.getHidden();
-  if (!cfg.items.find((it) => it.id === selectedId)) {
+  cfg = await bridge.getConfig();
+  displays = await bridge.getDisplays();
+  dockOptions = await bridge.getDockOptions();
+  appVersion = await bridge.getVersion();
+  hidden = await bridge.getHidden();
+  if (!selectedItem()) {
     selectedId = cfg.items[0] ? cfg.items[0].id : null;
   }
   renderAll();
 }
 
-function displayIdForItem(it) {
-  const cx = it.x + it.width / 2;
-  const cy = it.y + it.height / 2;
-  const d = displays.find(
-    (d) =>
-      cx >= d.bounds.x &&
-      cx < d.bounds.x + d.bounds.width &&
-      cy >= d.bounds.y &&
-      cy < d.bounds.y + d.bounds.height
-  );
-  return d ? d.id : displays[0] && displays[0].id;
+function storeItem(updated) {
+  const index = cfg.items.findIndex((item) => item.id === updated.id);
+  if (index !== -1) cfg.items[index] = updated;
 }
 
 async function patchItem(patch) {
-  await dmapi.upsertItem(patch);
-  const idx = cfg.items.findIndex((it) => it.id === patch.id);
-  if (idx !== -1) cfg.items[idx] = Object.assign({}, cfg.items[idx], patch);
+  const updated = await bridge.upsertItem(patch);
+  if (!updated) return;
+  const previousDock = selectedItem() && selectedItem().dock;
+  storeItem(updated);
   renderSidebar();
+  if (updated.id === selectedId && updated.dock !== previousDock) renderWidgets();
+}
+
+function settingLabel(label, hint) {
+  if (!hint) return `<label>${label}</label>`;
+  return `<div><label>${label}</label><div class="hint">${hint}</div></div>`;
+}
+
+function switchRow(id, label, on, hint) {
+  return `
+    <div class="row">
+      ${settingLabel(label, hint)}
+      <label class="switch"><input type="checkbox" id="${id}" ${checkedAttr(on)} /><span class="slider"></span></label>
+    </div>`;
+}
+
+function rangeRow(id, label, { min, max, step, value, text }) {
+  return `
+    <div class="row">
+      <label>${label}</label>
+      <div class="inline-controls">
+        <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}" />
+        <span class="range-val" id="${id}-v">${text}</span>
+      </div>
+    </div>`;
+}
+
+function numberField(id, label, value, min) {
+  const minAttr = min === undefined ? '' : `min="${min}"`;
+  return `<label class="field"><span>${label}</span><input type="number" id="${id}" ${minAttr} value="${Math.round(value)}" /></label>`;
+}
+
+function hotkeyRow(id, label, value) {
+  return `
+    <div class="row">
+      <label>${label}</label>
+      <input type="text" class="hotkey" id="${id}" readonly value="${escapeHtml(value)}" placeholder="click &amp; press…" />
+    </div>`;
+}
+
+function fitOption(value, label, current) {
+  return `<option value="${value}" ${selectedAttr(current === value)}>${label}</option>`;
+}
+
+function thumbnailHtml(item) {
+  const url = mediaUrl(item.src);
+  if (item.type === 'video') {
+    return `<video class="wl-media" src="${url}" muted preload="metadata"></video>`;
+  }
+  if (item.src) return `<img class="wl-media" src="${url}" alt="" />`;
+  return `<span class="wl-ph">${typeIcon(item.type)}</span>`;
+}
+
+function createWidgetTile(item) {
+  const tile = document.createElement('li');
+  tile.className = `wl-tile${item.id === selectedId ? ' active' : ''}`;
+  tile.innerHTML = `
+    <div class="wl-thumb">
+      ${thumbnailHtml(item)}
+      <span class="wl-dot ${item.enabled ? '' : 'off'}" title="${item.enabled ? 'Enabled' : 'Disabled'}"></span>
+      <span class="wl-badge">${typeIcon(item.type)}</span>
+    </div>
+    <div class="wl-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>`;
+  tile.onclick = () => {
+    selectedId = item.id;
+    view = 'widgets';
+    renderAll();
+  };
+  return tile;
+}
+
+function renderSidebar() {
+  byId('widget-list-wrap').style.display = view === 'widgets' ? 'block' : 'none';
+  widgetList.replaceChildren(...cfg.items.map(createWidgetTile));
+}
+
+function renderContent() {
+  if (view === 'global') {
+    renderGlobal();
+  } else if (view === 'about') {
+    renderAbout();
+  } else {
+    renderWidgets();
+  }
 }
 
 function renderAll() {
@@ -63,77 +195,80 @@ function renderAll() {
   renderContent();
 }
 
-function renderSidebar() {
-  document
-    .getElementById('widget-list-wrap')
-    .style.setProperty('display', view === 'widgets' ? 'block' : 'none');
-
-  widgetList.innerHTML = '';
-  cfg.items.forEach((it) => {
-    const li = document.createElement('li');
-    li.className = 'wl-tile' + (it.id === selectedId ? ' active' : '');
-    const preview =
-      it.type === 'video'
-        ? `<video class="wl-media" src="${toFileUrl(it.src)}" muted preload="metadata"></video>`
-        : it.src
-          ? `<img class="wl-media" src="${toFileUrl(it.src)}" alt="" />`
-          : `<span class="wl-ph">${typeIcon(it.type)}</span>`;
-    li.innerHTML = `
-      <div class="wl-thumb">
-        ${preview}
-        <span class="wl-dot ${it.enabled ? '' : 'off'}" title="${it.enabled ? 'Enabled' : 'Disabled'}"></span>
-        <span class="wl-badge">${typeIcon(it.type)}</span>
-      </div>
-      <div class="wl-name" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</div>`;
-    li.onclick = () => {
-      selectedId = it.id;
-      view = 'widgets';
-      renderAll();
-    };
-    widgetList.appendChild(li);
-  });
+function emptyStateHtml() {
+  return `
+    <div class="empty">
+      <div class="big">◐</div>
+      <div><strong>No widgets yet</strong><br/>Click “＋ Import Media” to add one or many images / GIFs / videos at once.</div>
+    </div>`;
 }
 
-function renderContent() {
-  if (view === 'global') return renderGlobal();
-  if (view === 'about') return renderAbout();
-  return renderWidgets();
+function previewHtml(item) {
+  if (!item.src) return '<span class="no-media">No media</span>';
+  const url = mediaUrl(item.src);
+  return item.type === 'video'
+    ? `<video src="${url}" autoplay loop muted></video>`
+    : `<img src="${url}" alt="" />`;
 }
 
-function renderWidgets() {
-  const item = cfg.items.find((it) => it.id === selectedId);
-  if (!item) {
-    content.innerHTML = `
-      <div class="empty">
-        <div class="big">◐</div>
-        <div><strong>No widgets yet</strong><br/>Click “＋ Import Media” to add one or many images / GIFs / videos at once.</div>
-      </div>`;
-    return;
-  }
+function placementRowsHtml(item) {
+  const options = dockOptions
+    .map(
+      ({ id, label }) =>
+        `<option value="${id || ''}" ${selectedAttr(id === item.dock)}>${escapeHtml(label)}</option>`
+    )
+    .join('');
+  return `
+    <div class="row">
+      ${settingLabel('Placement', 'Stretch across a screen edge, fill the screen, or stay in a corner. The widget stays there when the display changes.')}
+      <select id="f-dock" class="select-md">${options}</select>
+    </div>
+    ${item.dock ? switchRow('f-cover-taskbar', 'Cover the taskbar', item.coverTaskbar, 'Use the whole screen, including the taskbar area.') : ''}`;
+}
 
-  const isVideo = item.type === 'video';
-  const preview = isVideo
-    ? `<video src="${toFileUrl(item.src)}" autoplay loop muted></video>`
-    : `<img src="${toFileUrl(item.src)}" alt="" />`;
+function monitorRowHtml(item) {
+  if (displays.length <= 1) return '';
+  const currentDisplayId = displayIdForItem(item);
+  const options = displays
+    .map(
+      ({ id, label }) =>
+        `<option value="${id}" ${selectedAttr(id === currentDisplayId)}>${escapeHtml(label)}</option>`
+    )
+    .join('');
+  return `
+    <div class="row">
+      ${settingLabel('Monitor', 'Move the widget to the centre of the selected display.')}
+      <select id="f-monitor" class="select-md">${options}</select>
+    </div>`;
+}
 
-  content.innerHTML = `
+function videoRowsHtml(item) {
+  if (item.type !== 'video') return '';
+  return `
+    ${switchRow('f-loop', 'Loop', item.loop)}
+    ${switchRow('f-muted', 'Muted', item.muted)}
+    ${rangeRow('f-vol', 'Volume', { min: 0, max: 1, step: 0.01, value: item.volume, text: percent(item.volume) })}`;
+}
+
+function widgetFormHtml(item) {
+  return `
     <div class="detail-head">
-      <input type="text" id="f-name" value="${escapeHtml(item.name)}" style="max-width:280px;font-weight:600" />
-      <div style="display:flex;gap:10px;align-items:center">
+      <input type="text" id="f-name" class="name-input" value="${escapeHtml(item.name)}" />
+      <div class="inline-controls">
         <label class="switch" title="Enabled">
-          <input type="checkbox" id="f-enabled" ${item.enabled ? 'checked' : ''} />
+          <input type="checkbox" id="f-enabled" ${checkedAttr(item.enabled)} />
           <span class="slider"></span>
         </label>
         <button class="btn danger" id="f-delete">Delete</button>
       </div>
     </div>
 
-    <div class="preview">${item.src ? preview : '<span style="color:var(--muted)">No media</span>'}</div>
+    <div class="preview">${previewHtml(item)}</div>
 
     <div class="card">
       <h3>Source</h3>
       <div class="row">
-        <div style="min-width:0">
+        <div class="source-path">
           <div class="path">${escapeHtml(item.src || '(none)')}</div>
         </div>
         <button class="btn" id="f-change">Change file…</button>
@@ -141,362 +276,352 @@ function renderWidgets() {
     </div>
 
     <div class="card">
-      <h3>Position & Size</h3>
+      <h3>Position &amp; Size</h3>
       <div class="grid2">
-        <label class="field"><span>X (px)</span><input type="number" id="f-x" value="${Math.round(item.x)}" /></label>
-        <label class="field"><span>Y (px)</span><input type="number" id="f-y" value="${Math.round(item.y)}" /></label>
-        <label class="field"><span>Width (px)</span><input type="number" id="f-w" min="20" value="${Math.round(item.width)}" /></label>
-        <label class="field"><span>Height (px)</span><input type="number" id="f-h" min="20" value="${Math.round(item.height)}" /></label>
+        ${numberField('f-x', 'X (px)', item.x)}
+        ${numberField('f-y', 'Y (px)', item.y)}
+        ${numberField('f-w', 'Width (px)', item.width, 40)}
+        ${numberField('f-h', 'Height (px)', item.height, 40)}
       </div>
-      ${
-        displays.length > 1
-          ? `<div class="row">
-        <div><label>Monitor</label><div class="hint">Move the widget to the centre of the selected display.</div></div>
-        <select id="f-monitor" style="max-width:220px">
-          ${displays
-            .map(
-              (d) =>
-                `<option value="${d.id}" ${d.id === displayIdForItem(item) ? 'selected' : ''}>${escapeHtml(d.label)}</option>`
-            )
-            .join('')}
-        </select>
-      </div>`
-          : ''
-      }
-      <div class="row" style="margin-top:6px">
-        <span class="hint">Tip: just <strong>drag</strong> a widget on screen to move it, <strong>scroll</strong> to resize, <strong>right-click</strong> for options. It <em>snaps</em> to monitor edges/centre.</span>
+      ${placementRowsHtml(item)}
+      ${monitorRowHtml(item)}
+      <div class="row tip-row">
+        <span class="hint">Tip: just <strong>drag</strong> a widget on screen to move it, <strong>scroll</strong> to resize, <strong>right-click</strong> for options. It <em>snaps</em> to monitor edges.</span>
       </div>
     </div>
 
     <div class="card">
       <h3>Appearance</h3>
-      <div class="row">
-        <label>Opacity</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="f-opacity" min="0" max="1" step="0.01" value="${item.opacity}" />
-          <span class="range-val" id="f-opacity-v">${Math.round(item.opacity * 100)}%</span>
-        </div>
-      </div>
-      <div class="row">
-        <label>Rotation</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="f-rot" min="-180" max="180" step="1" value="${item.rotation}" />
-          <span class="range-val" id="f-rot-v">${item.rotation}°</span>
-        </div>
-      </div>
+      ${rangeRow('f-opacity', 'Opacity', { min: 0, max: 1, step: 0.01, value: item.opacity, text: percent(item.opacity) })}
+      ${rangeRow('f-rot', 'Rotation', { min: -180, max: 180, step: 1, value: item.rotation, text: `${item.rotation}°` })}
       <div class="row">
         <label>Fit</label>
-        <select id="f-fit" style="max-width:160px">
-          <option value="contain" ${item.fit === 'contain' ? 'selected' : ''}>Contain</option>
-          <option value="cover" ${item.fit === 'cover' ? 'selected' : ''}>Cover</option>
-          <option value="fill" ${item.fit === 'fill' ? 'selected' : ''}>Fill</option>
+        <select id="f-fit" class="select-sm">
+          ${fitOption('contain', 'Contain', item.fit)}
+          ${fitOption('cover', 'Cover', item.fit)}
+          ${fitOption('fill', 'Fill', item.fit)}
         </select>
       </div>
-      <div class="row">
-        <label>Flip horizontally</label>
-        <label class="switch"><input type="checkbox" id="f-flip" ${item.flipX ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
+      ${switchRow('f-flip', 'Flip horizontally', item.flipX)}
     </div>
 
     <div class="card">
       <h3>Behavior</h3>
-      <div class="row">
-        <div><label>Lock position</label><div class="hint">Can't be dragged / scrolled (right-click still works).</div></div>
-        <label class="switch"><input type="checkbox" id="f-locked" ${item.locked ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <div><label>Click-through</label><div class="hint">Mouse passes through this widget to the app behind it.</div></div>
-        <label class="switch"><input type="checkbox" id="f-click" ${item.clickThrough ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      ${
-        isVideo
-          ? `
-      <div class="row">
-        <label>Loop</label>
-        <label class="switch"><input type="checkbox" id="f-loop" ${item.loop ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <label>Muted</label>
-        <label class="switch"><input type="checkbox" id="f-muted" ${item.muted ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <label>Volume</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="f-vol" min="0" max="1" step="0.01" value="${item.volume}" />
-          <span class="range-val" id="f-vol-v">${Math.round(item.volume * 100)}%</span>
-        </div>
-      </div>`
-          : ''
-      }
+      ${switchRow('f-locked', 'Lock position', item.locked, "Can't be dragged / scrolled (right-click still works).")}
+      ${switchRow('f-click', 'Click-through', item.clickThrough, 'Mouse passes through this widget to the app behind it.')}
+      ${videoRowsHtml(item)}
     </div>`;
+}
 
+function renderWidgets() {
+  const item = selectedItem();
+  if (!item) {
+    content.innerHTML = emptyStateHtml();
+    return;
+  }
+  content.innerHTML = widgetFormHtml(item);
   wireWidgetForm(item);
 }
 
-function wireWidgetForm(item) {
-  const id = item.id;
-  const $ = (sel) => document.getElementById(sel);
+function wireRange(elementId, format, commit) {
+  byId(elementId).oninput = (event) => {
+    const value = Number(event.target.value);
+    byId(`${elementId}-v`).textContent = format(value);
+    debounce(elementId, () => commit(value));
+  };
+}
 
-  $('f-name').oninput = (e) =>
-    debounce('name', () => patchItem({ id, name: e.target.value }));
-  $('f-enabled').onchange = (e) => patchItem({ id, enabled: e.target.checked });
-  $('f-delete').onclick = async () => {
-    await dmapi.removeItem(id);
+function wireWidgetForm(item) {
+  const { id } = item;
+
+  const wireToggle = (elementId, key) => {
+    byId(elementId).onchange = (event) => patchItem({ id, [key]: event.target.checked });
+  };
+  const wireNumber = (elementId, key) => {
+    byId(elementId).oninput = (event) => {
+      debounce(key, () => patchItem({ id, [key]: Number(event.target.value) || 0 }));
+    };
+  };
+
+  byId('f-name').oninput = (event) => {
+    debounce('name', () => patchItem({ id, name: event.target.value }));
+  };
+  byId('f-delete').onclick = async () => {
+    await bridge.removeItem(id);
     selectedId = null;
     reload();
   };
-  $('f-change').onclick = async () => {
-    const picked = await dmapi.pickFile();
-    if (picked) patchItem({ id, src: picked.filePath, type: picked.type }).then(reload);
+  byId('f-change').onclick = async () => {
+    const picked = await bridge.pickFile();
+    if (!picked) return;
+    await patchItem({ id, src: picked.filePath, type: picked.type });
+    reload();
   };
 
-  const num = (elId, key) =>
-    ($(elId).oninput = (e) =>
-      debounce(key, () => patchItem({ id, [key]: Number(e.target.value) || 0 })));
-  num('f-x', 'x');
-  num('f-y', 'y');
-  num('f-w', 'width');
-  num('f-h', 'height');
+  wireToggle('f-enabled', 'enabled');
+  wireToggle('f-flip', 'flipX');
+  wireToggle('f-locked', 'locked');
+  wireToggle('f-click', 'clickThrough');
+  wireNumber('f-x', 'x');
+  wireNumber('f-y', 'y');
+  wireNumber('f-w', 'width');
+  wireNumber('f-h', 'height');
+  wireRange('f-opacity', percent, (opacity) => patchItem({ id, opacity }));
+  wireRange('f-rot', (rotation) => `${rotation}°`, (rotation) => patchItem({ id, rotation }));
+  byId('f-fit').onchange = (event) => patchItem({ id, fit: event.target.value });
 
-  if ($('f-monitor')) {
-    $('f-monitor').onchange = async (e) => {
-      await dmapi.moveToDisplay(id, Number(e.target.value));
+  byId('f-dock').onchange = async (event) => {
+    await bridge.setDock(id, event.target.value || null);
+    await reload();
+  };
+  if (item.dock) wireToggle('f-cover-taskbar', 'coverTaskbar');
+
+  const monitorSelect = byId('f-monitor');
+  if (monitorSelect) {
+    monitorSelect.onchange = async (event) => {
+      await bridge.moveToDisplay(id, Number(event.target.value));
       await reload();
     };
   }
 
-  $('f-opacity').oninput = (e) => {
-    $('f-opacity-v').textContent = Math.round(e.target.value * 100) + '%';
-    debounce('op', () => patchItem({ id, opacity: Number(e.target.value) }));
-  };
-  $('f-rot').oninput = (e) => {
-    $('f-rot-v').textContent = e.target.value + '°';
-    debounce('rot', () => patchItem({ id, rotation: Number(e.target.value) }));
-  };
-  $('f-fit').onchange = (e) => patchItem({ id, fit: e.target.value });
-  $('f-flip').onchange = (e) => patchItem({ id, flipX: e.target.checked });
-  $('f-locked').onchange = (e) => patchItem({ id, locked: e.target.checked });
-  $('f-click').onchange = (e) => patchItem({ id, clickThrough: e.target.checked });
-
   if (item.type === 'video') {
-    $('f-loop').onchange = (e) => patchItem({ id, loop: e.target.checked });
-    $('f-muted').onchange = (e) => patchItem({ id, muted: e.target.checked });
-    $('f-vol').oninput = (e) => {
-      $('f-vol-v').textContent = Math.round(e.target.value * 100) + '%';
-      debounce('vol', () => patchItem({ id, volume: Number(e.target.value) }));
-    };
+    wireToggle('f-loop', 'loop');
+    wireToggle('f-muted', 'muted');
+    wireRange('f-vol', percent, (volume) => patchItem({ id, volume }));
   }
 }
 
-function renderGlobal() {
-  const g = cfg.globals;
-  content.innerHTML = `
+function globalFormHtml({ startWithWindows, openSettingsOnLaunch, snapToEdges, snapThreshold, hotkeys }) {
+  return `
     <div class="card">
       <h3>Startup</h3>
-      <div class="row">
-        <div><label>Start with Windows</label><div class="hint">Launch automatically (minimized to tray) when you sign in.</div></div>
-        <label class="switch"><input type="checkbox" id="g-startup" ${g.startWithWindows ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <div><label>Open this window on launch</label><div class="hint">Otherwise it stays in the tray.</div></div>
-        <label class="switch"><input type="checkbox" id="g-opensettings" ${g.openSettingsOnLaunch ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
+      ${switchRow('g-startup', 'Start with Windows', startWithWindows, 'Launch automatically (minimized to tray) when you sign in.')}
+      ${switchRow('g-opensettings', 'Open this window on launch', openSettingsOnLaunch, 'Otherwise it stays in the tray.')}
     </div>
 
     <div class="card">
       <h3>Widget</h3>
       <div class="row">
-        <div><label>All widgets</label><div class="hint">Make them all interactive, or all click-through (e.g. before gaming).</div></div>
-        <div style="display:flex;gap:8px">
+        ${settingLabel('All widgets', 'Make them all interactive, or all click-through (e.g. before gaming).')}
+        <div class="button-group">
           <button class="btn" id="g-ct-off">Interactive</button>
           <button class="btn" id="g-ct-on">Click-through</button>
         </div>
       </div>
       <div class="row">
-        <div><label>Hide all widgets</label><div class="hint">Temporarily hide without disabling.</div></div>
+        ${settingLabel('Hide all widgets', 'Temporarily hide without disabling.')}
         <button class="btn ${hidden ? 'primary' : ''}" id="g-hide">${hidden ? '👁 Show all' : '🙈 Hide all'}</button>
       </div>
     </div>
 
     <div class="card">
       <h3>Snapping</h3>
-      <div class="row">
-        <div><label>Snap to monitor edges & centre</label><div class="hint">While dragging a widget.</div></div>
-        <label class="switch"><input type="checkbox" id="g-snap" ${g.snapToEdges ? 'checked' : ''} /><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <label>Snap distance</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="g-snapt" min="0" max="48" step="1" value="${g.snapThreshold}" />
-          <span class="range-val" id="g-snapt-v">${g.snapThreshold}px</span>
-        </div>
-      </div>
+      ${switchRow('g-snap', 'Snap to monitor edges', snapToEdges, 'While dragging a widget.')}
+      ${rangeRow('g-snapt', 'Snap distance', { min: 0, max: 48, step: 1, value: snapThreshold, text: `${snapThreshold}px` })}
     </div>
 
     <div class="card">
       <h3>Global hotkeys</h3>
-      <div class="hint" style="margin-bottom:8px">Click a field, then press a key combo. Works system-wide (even in games).</div>
-      <div class="row">
-        <label>Toggle click-through (all)</label>
-        <input type="text" class="hotkey" id="hk-mode" readonly value="${escapeHtml(g.hotkeys.toggleClickThrough)}" placeholder="click & press…" />
-      </div>
-      <div class="row">
-        <label>Show / hide all</label>
-        <input type="text" class="hotkey" id="hk-hide" readonly value="${escapeHtml(g.hotkeys.toggleHidden)}" placeholder="click & press…" />
-      </div>
-      <div class="row">
-        <label>Open Settings</label>
-        <input type="text" class="hotkey" id="hk-open" readonly value="${escapeHtml(g.hotkeys.openSettings)}" placeholder="click & press…" />
-      </div>
+      <div class="hint hotkey-help">Click a field, then press a key combo with Ctrl, Alt or Win, or a function key. Works system-wide (even in games).</div>
+      <div class="hotkey-status" id="hotkey-status"></div>
+      ${hotkeyRow('hk-mode', 'Toggle click-through (all)', hotkeys.toggleClickThrough)}
+      ${hotkeyRow('hk-hide', 'Show / hide all', hotkeys.toggleHidden)}
+      ${hotkeyRow('hk-open', 'Open Settings', hotkeys.openSettings)}
     </div>`;
+}
 
-  document.getElementById('g-startup').onchange = (e) =>
-    dmapi.setGlobals({ startWithWindows: e.target.checked });
-  document.getElementById('g-opensettings').onchange = (e) =>
-    dmapi.setGlobals({ openSettingsOnLaunch: e.target.checked });
-  document.getElementById('g-ct-off').onclick = () =>
-    dmapi.setAllClickThrough(false);
-  document.getElementById('g-ct-on').onclick = () =>
-    dmapi.setAllClickThrough(true);
+function renderGlobal() {
+  content.innerHTML = globalFormHtml(cfg.globals);
 
-  document.getElementById('g-hide').onclick = async () => {
-    hidden = await dmapi.setHidden(!hidden);
+  const wireGlobalToggle = (elementId, key) => {
+    byId(elementId).onchange = (event) => bridge.setGlobals({ [key]: event.target.checked });
+  };
+
+  wireGlobalToggle('g-startup', 'startWithWindows');
+  wireGlobalToggle('g-opensettings', 'openSettingsOnLaunch');
+  wireGlobalToggle('g-snap', 'snapToEdges');
+  byId('g-ct-off').onclick = () => bridge.setAllClickThrough(false);
+  byId('g-ct-on').onclick = () => bridge.setAllClickThrough(true);
+  byId('g-hide').onclick = async () => {
+    hidden = await bridge.setHidden(!hidden);
     renderGlobal();
   };
-  document.getElementById('g-snap').onchange = (e) =>
-    dmapi.setGlobals({ snapToEdges: e.target.checked });
-  document.getElementById('g-snapt').oninput = (e) => {
-    document.getElementById('g-snapt-v').textContent = e.target.value + 'px';
-    debounce('snapt', () =>
-      dmapi.setGlobals({ snapThreshold: Number(e.target.value) })
-    );
-  };
+  wireRange('g-snapt', (px) => `${px}px`, (snapThreshold) => bridge.setGlobals({ snapThreshold }));
 
   wireHotkey('hk-mode', 'toggleClickThrough');
   wireHotkey('hk-hide', 'toggleHidden');
   wireHotkey('hk-open', 'openSettings');
+  showHotkeyFailures();
 }
 
-function wireHotkey(elId, key) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  el.onkeydown = (e) => {
-    e.preventDefault();
-    const parts = [];
-    if (e.ctrlKey) parts.push('CmdOrCtrl');
-    if (e.altKey) parts.push('Alt');
-    if (e.shiftKey) parts.push('Shift');
-    if (e.metaKey) parts.push('Super');
-    const k = normalizeKey(e.key, e.code);
-    if (k && !['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-      parts.push(k);
-      const accel = parts.join('+');
-      el.value = accel;
-      cfg.globals.hotkeys[key] = accel;
-      dmapi.setGlobals({ hotkeys: { [key]: accel } });
-    }
-  };
-}
-
-function normalizeKey(key, code) {
+function acceleratorKey(key, code) {
   if (/^[a-z]$/i.test(key)) return key.toUpperCase();
   if (/^[0-9]$/.test(key)) return key;
-  if (code && code.startsWith('Key')) return code.slice(3);
-  if (code && code.startsWith('Digit')) return code.slice(5);
-  const map = {
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    ' ': 'Space',
-    Escape: 'Esc',
-  };
-  if (map[key]) return map[key];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (SPECIAL_KEYS[key]) return SPECIAL_KEYS[key];
   if (/^F\d{1,2}$/.test(key)) return key;
   return key.length === 1 ? key : '';
+}
+
+function acceleratorFromEvent(event) {
+  const key = acceleratorKey(event.key, event.code);
+  if (!key || MODIFIER_KEYS.includes(event.key)) return null;
+  const parts = [];
+  if (event.ctrlKey) parts.push('CmdOrCtrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (event.metaKey) parts.push('Super');
+  return [...parts, key].join('+');
+}
+
+function isSafeHotkeyEvent(event, accelerator) {
+  const isFunctionKey = /^F\d{1,2}$/.test(accelerator.split('+').pop());
+  return event.ctrlKey || event.altKey || event.metaKey || isFunctionKey;
+}
+
+function setHotkeyStatus(message) {
+  const status = byId('hotkey-status');
+  if (status) status.textContent = message;
+}
+
+async function showHotkeyFailures() {
+  const failures = await bridge.getHotkeyFailures();
+  const taken = failures.map(({ accelerator }) => accelerator).join(', ');
+  setHotkeyStatus(taken ? `Not active, already in use: ${taken}` : '');
+}
+
+function wireHotkey(elementId, hotkeyName) {
+  const input = byId(elementId);
+  input.onkeydown = async (event) => {
+    event.preventDefault();
+    const accelerator = acceleratorFromEvent(event);
+    if (!accelerator) return;
+    if (!isSafeHotkeyEvent(event, accelerator)) {
+      setHotkeyStatus(`${accelerator} would block typing. Add Ctrl, Alt or Win, or use a function key.`);
+      return;
+    }
+    input.value = accelerator;
+    cfg.globals = await bridge.setGlobals({ hotkeys: { [hotkeyName]: accelerator } });
+    await showHotkeyFailures();
+  };
 }
 
 function renderAbout() {
   content.innerHTML = `
     <div class="about">
-      <h2 style="margin-top:0">Desktop Mate Wannabe <span class="tag">v0.1</span></h2>
+      <h2>Overlet <span class="tag">v${escapeHtml(appVersion)}</span></h2>
       <p>An always-on-top desktop overlay for images, GIFs, and video — it floats above the
       taskbar and over borderless/windowed games.</p>
-      <p><strong>How to use (Rainmeter-style):</strong> <code>drag</code> a widget to move it,
+      <p><strong>How to use:</strong> <code>drag</code> a widget to move it,
       <code>scroll</code> to resize, <code>right-click</code> for options (lock position,
       click-through, size, etc.).</p>
-      <p><span class="tag">PNG</span><span class="tag">JPG</span><span class="tag">GIF</span><span class="tag">WebP</span><span class="tag">MP4</span><span class="tag">WebM</span></p>
-      <p style="font-size:11px">Note: true <em>exclusive</em>-fullscreen games can cover the overlay — set the
+      <p><span class="tag">PNG</span><span class="tag">JPG</span><span class="tag">GIF</span><span class="tag">WebP</span><span class="tag">AVIF</span><span class="tag">SVG</span><span class="tag">WebM</span></p>
+      <p class="about-note">Note: true <em>exclusive</em>-fullscreen games can cover the overlay — set the
       game to <em>Borderless/Windowed</em> for it to show through.</p>
     </div>`;
 }
 
-document.querySelectorAll('.nav-btn').forEach((b) => {
-  b.onclick = () => {
-    view = b.dataset.view;
-    document
-      .querySelectorAll('.nav-btn')
-      .forEach((n) => n.classList.toggle('active', n === b));
-    renderSidebar();
-    renderContent();
+function setActiveNav(activeView) {
+  document.querySelectorAll('.nav-btn').forEach((button) => {
+    button.classList.toggle('active', button.dataset.view === activeView);
+  });
+}
+
+async function addFiles(files) {
+  const existingCount = cfg.items.length;
+  for (const [index, file] of files.entries()) {
+    const step = (existingCount + index) % IMPORT_CASCADE_LENGTH;
+    const item = await bridge.upsertItem({
+      name: baseName(file.filePath),
+      src: file.filePath,
+      type: file.type,
+      enabled: true,
+      x: IMPORT_ORIGIN.x + step * IMPORT_OFFSET,
+      y: IMPORT_ORIGIN.y + step * IMPORT_OFFSET,
+      width: IMPORT_SIZE,
+      height: IMPORT_SIZE,
+    });
+    selectedId = item.id;
+  }
+  view = 'widgets';
+  setActiveNav(view);
+  await reload();
+}
+
+async function importMedia() {
+  const files = await bridge.pickFiles();
+  if (files) await addFiles(files);
+}
+
+async function importDroppedFiles(event) {
+  event.preventDefault();
+  document.body.classList.remove('drop-target');
+  const files = await bridge.describeDroppedFiles([...event.dataTransfer.files]);
+  if (files.length > 0) await addFiles(files);
+}
+
+function syncField(elementId, value) {
+  const field = byId(elementId);
+  if (field && document.activeElement !== field) field.value = Math.round(value);
+}
+
+function applyItemChange(updated) {
+  const previous = cfg.items.find((item) => item.id === updated.id);
+  storeItem(updated);
+  if (view !== 'widgets' || updated.id !== selectedId) return;
+  if (previous && previous.dock !== updated.dock) {
+    renderWidgets();
+    return;
+  }
+  syncField('f-x', updated.x);
+  syncField('f-y', updated.y);
+  syncField('f-w', updated.width);
+  syncField('f-h', updated.height);
+}
+
+function showPreviewError(event) {
+  const media = event.target;
+  const parent = media.parentElement;
+  if (parent && parent.classList.contains('wl-thumb')) media.remove();
+  if (!parent || !parent.classList.contains('preview')) return;
+  const notice = document.createElement('span');
+  notice.className = 'no-media';
+  notice.textContent = "Can't show this file. It may have been moved, or its format is not supported.";
+  media.replaceWith(notice);
+}
+
+document.querySelectorAll('.nav-btn').forEach((button) => {
+  button.onclick = () => {
+    view = button.dataset.view;
+    setActiveNav(view);
+    renderAll();
   };
 });
+byId('add-btn').onclick = importMedia;
+document.addEventListener('error', showPreviewError, true);
+document.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  document.body.classList.add('drop-target');
+});
+document.addEventListener('dragleave', (event) => {
+  if (!event.relatedTarget) document.body.classList.remove('drop-target');
+});
+document.addEventListener('drop', importDroppedFiles);
 
-document.getElementById('add-btn').onclick = async () => {
-  const picked = await dmapi.pickFiles();
-  if (!picked) return;
-  const files = Array.isArray(picked) ? picked : [picked];
-  const startCount = cfg.items.length;
-  let lastId = selectedId;
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const step = (startCount + i) % 8;
-    const item = await dmapi.upsertItem({
-      name: baseName(f.filePath),
-      src: f.filePath,
-      type: f.type,
-      enabled: true,
-      x: 260 + step * 40,
-      y: 200 + step * 40,
-      width: 320,
-      height: 320,
-    });
-    lastId = item.id;
-  }
-  selectedId = lastId;
-  view = 'widgets';
-  await reload();
-};
-
-function baseName(p) {
-  const b = p.replace(/\\/g, '/').split('/').pop() || 'Widget';
-  return b.replace(/\.[^.]+$/, '');
-}
-
-function escapeHtml(s) {
-  return String(s || '').replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
-  );
-}
-
-dmapi.onConfigChanged((c) => {
-  cfg = c;
+bridge.onConfigChanged((updatedConfig) => {
+  cfg = updatedConfig;
   renderAll();
 });
-
-dmapi.onHiddenChanged((v) => {
-  hidden = v;
+bridge.onItemChanged(applyItemChange);
+bridge.onHiddenChanged((value) => {
+  hidden = value;
   if (view === 'global') renderGlobal();
 });
-
-dmapi.onSelectItem((id) => {
+bridge.onSelectItem((id) => {
   selectedId = id;
   view = 'widgets';
-  document
-    .querySelectorAll('.nav-btn')
-    .forEach((n) => n.classList.toggle('active', n.dataset.view === 'widgets'));
+  setActiveNav(view);
   renderAll();
 });
 

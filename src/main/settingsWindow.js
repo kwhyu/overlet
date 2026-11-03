@@ -3,16 +3,29 @@
 const path = require('path');
 const { BrowserWindow } = require('electron');
 
-const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload.js');
-const SETTINGS_HTML = path.join(__dirname, '..', 'renderer', 'settings', 'settings.html');
+const PRELOAD_PATH = path.join(__dirname, '..', 'preload', 'settings-preload.js');
+const HTML_PATH = path.join(__dirname, '..', 'renderer', 'settings', 'settings.html');
+const REPORTED_CONSOLE_LEVELS = ['warning', 'error'];
 
 let win = null;
 
+function logRendererProblems(webContents) {
+  webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+    if (REPORTED_CONSOLE_LEVELS.includes(level)) {
+      console.log(`[settings] ${message} (${sourceId}:${lineNumber})`);
+    }
+  });
+}
+
+function focusExisting() {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function open() {
   if (win && !win.isDestroyed()) {
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
+    focusExisting();
     return win;
   }
 
@@ -21,26 +34,27 @@ function open() {
     height: 640,
     minWidth: 720,
     minHeight: 480,
-    title: 'Desktop Mate Wannabe',
+    title: 'Overlet',
     backgroundColor: '#ffffff',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: SETTINGS_PRELOAD,
+      preload: PRELOAD_PATH,
       contextIsolation: true,
       nodeIntegration: false,
+      devTools: process.argv.includes('--dev'),
     },
   });
 
-  win.loadFile(SETTINGS_HTML);
-  if (process.argv.includes('--dev')) {
-    win.webContents.on('console-message', (_e, level, msg, line, src) => {
-      if (level >= 2) console.log(`[settings] ${msg} (${src}:${line})`);
-    });
-  }
+  win.loadFile(HTML_PATH);
+  if (process.argv.includes('--dev')) logRendererProblems(win.webContents);
   win.on('closed', () => {
     win = null;
   });
   return win;
+}
+
+function isSender(webContents) {
+  return Boolean(win) && !win.isDestroyed() && win.webContents === webContents;
 }
 
 function broadcast(channel, payload) {
@@ -49,4 +63,4 @@ function broadcast(channel, payload) {
   }
 }
 
-module.exports = { open, broadcast };
+module.exports = { broadcast, isSender, open };
