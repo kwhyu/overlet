@@ -8,7 +8,7 @@ Windows 10 and 11. Free and open source under the [MIT License](LICENSE).
 
 ## Important notes
 
-- **Beta software.** It comes with no warranty, and things can change between versions.
+- **No warranty.** The app is provided as is, and things can change between versions.
 - **The downloads are not code signed.** Windows SmartScreen or your antivirus may warn you. Download only from this repository.
 - **Nothing is collected.** The app has no telemetry, accounts or ads, and it makes no network requests of its own. See [PRIVACY.md](PRIVACY.md).
 - **Use media you have the right to use.** The app shows your own local files. It does not include or download any.

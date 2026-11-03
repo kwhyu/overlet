@@ -1,6 +1,6 @@
 {
   "name": "overlet",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Put images, GIFs and videos on top of everything on your Windows desktop.",
   "main": "src/main/main.js",
   "scripts": {
